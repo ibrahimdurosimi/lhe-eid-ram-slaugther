@@ -217,8 +217,15 @@ export default function App() {
                 if (e.key === 'Enter') {
                   const val = (e.target as HTMLInputElement).value.trim();
                   if (val) {
-                    setSpreadsheetId(val);
-                    localStorage.setItem(SPREADSHEET_ID_KEY, val);
+                    let id = val;
+                    const match = val.match(/[/]d[/]([a-zA-Z0-9-_]+)/);
+                    if (match) {
+                      id = match[1];
+                    }
+                    // Handle case where id is not properly extracted
+                    id = match ? match[1] : val;
+                    setSpreadsheetId(id);
+                    localStorage.setItem(SPREADSHEET_ID_KEY, id);
                   }
                 }
               }}
