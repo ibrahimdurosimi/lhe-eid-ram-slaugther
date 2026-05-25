@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    function incoming() { return request.resource.data; }
+    
+    function isValidBooking(data) {
+      return data.keys().hasAll(['timestamp', 'house', 'subUnit', 'date', 'slot', 'createdAt']) &&
+             data.keys().size() == 6 &&
+             data.timestamp is string && data.timestamp.size() <= 100 &&
+             data.house is string && data.house.size() <= 100 &&
+             data.subUnit is string && data.subUnit.size() <= 100 &&
+             data.date is string && data.date.size() <= 20 &&
+             data.slot is string && data.slot.size() <= 50 &&
+             data.createdAt == request.time;
+    }
+    
+    match /bookings/{bookingId} {
+      // allow read for everyone since the dashboard is public
+      allow read: if true;
+      allow create: if isValidBooking(incoming());
+      allow update, delete: if false;
+    }
+  }
+}

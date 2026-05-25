@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Home, AlertCircle, CalendarCheck, CheckCircle2, RadioTower, Lock, Check } from 'lucide-react';
 import { Booking } from './types';
-
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz6hgJNnxSv6cM3Aj5hmvMA_35zZvBZGX4a5wxHU7CXiN1yC_quGArb92_Rv_yNCPPu/exec";
+import { db, handleFirestoreError, OperationType } from './firebase';
+import { collection, onSnapshot, addDoc, serverTimestamp, query } from 'firebase/firestore';
 
 const REGULAR_SLOTS = ["06:00 AM - 08:00 AM", "08:00 AM - 10:00 AM", "10:00 AM - 12:00 PM", "12:00 PM - 02:00 PM", "02:00 PM - 04:00 PM", "04:00 PM - 06:00 PM", "06:00 PM - 08:00 PM"];
 const MAY_27_SLOTS = ["09:00 AM - 11:00 AM", "11:00 AM - 01:00 PM", "01:00 PM - 03:00 PM", "03:00 PM - 05:00 PM", "05:00 PM - 07:00 PM", "07:00 PM - 08:00 PM"];
@@ -25,24 +25,41 @@ export default function App() {
   // Dashboard State
   const [activeDashboardDate, setActiveDashboardDate] = useState(DATES[0]);
 
-  const fetchBookingsData = useCallback(async () => {
-    try {
-      setErrorMsg(null);
-      const res = await fetch(SCRIPT_URL);
-      const data = await res.json();
-      setAllBookings(data || []);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg('Failed to load bookings. Please check your connection.');
-    }
+  const fetchBookingsData = useCallback(() => {
+    setIsLoadingBookings(true);
+    setErrorMsg(null);
+    const q = query(collection(db, 'bookings'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const bookingsData: Booking[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        let dStr = data.date;
+        if (dStr && dStr.includes('T')) {
+          const d = new Date(dStr);
+          dStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        bookingsData.push({
+          timestamp: data.timestamp,
+          house: data.house,
+          subUnit: data.subUnit,
+          date: dStr,
+          slot: data.slot,
+        });
+      });
+      setAllBookings(bookingsData);
+      setIsLoadingBookings(false);
+    }, (error) => {
+      setIsLoadingBookings(false);
+      handleFirestoreError(error, OperationType.LIST, 'bookings');
+      setErrorMsg('Failed to sync bookings. Check connection.');
+    });
+    
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
-    setIsLoadingBookings(true);
-    fetchBookingsData().finally(() => setIsLoadingBookings(false));
-    
-    const interval = setInterval(fetchBookingsData, 8000);
-    return () => clearInterval(interval);
+    const unsubscribe = fetchBookingsData();
+    return () => unsubscribe();
   }, [fetchBookingsData]);
 
   const formatFullDate = (dateStr: string) => {
@@ -70,28 +87,24 @@ export default function App() {
     // Check if slot taken
     if (allBookings.find(b => b.date === selectedDate && b.slot === selectedSlot)) {
       alert("This slot was just taken. Please select another.");
-      await fetchBookingsData();
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const newBooking: Booking = {
+      const newBooking: Omit<Booking, 'createdAt'> & { createdAt: any } = {
         timestamp: new Date().toISOString(),
         house,
         subUnit,
         date: selectedDate,
-        slot: selectedSlot
+        slot: selectedSlot,
+        createdAt: serverTimestamp()
       };
-      await fetch(SCRIPT_URL, {
-        method: "POST",
-        body: JSON.stringify(newBooking),
-        headers: { "Content-Type": "text/plain" }
-      });
-      await fetchBookingsData();
-      setSuccessBooking(newBooking);
+      await addDoc(collection(db, 'bookings'), newBooking);
+      setSuccessBooking(newBooking as any);
     } catch (err) {
       console.error(err);
+      handleFirestoreError(err, OperationType.CREATE, 'bookings');
       alert("Failed to submit booking. Check connection.");
     } finally {
       setIsSubmitting(false);
@@ -268,7 +281,7 @@ export default function App() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Syncing with Google Sheets...
+                Syncing with Firestore...
               </div>
             ) : (
               <div className="space-y-4 pb-10">

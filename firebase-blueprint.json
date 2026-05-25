@@ -1,0 +1,24 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "A booking slot",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string" },
+        "house": { "type": "string" },
+        "subUnit": { "type": "string" },
+        "date": { "type": "string" },
+        "slot": { "type": "string" },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["timestamp", "house", "subUnit", "date", "slot", "createdAt"]
+    }
+  },
+  "firestore": {
+    "bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Bookings for the estate"
+    }
+  }
+}
