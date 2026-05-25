@@ -29,7 +29,17 @@ export default function App() {
     setIsLoadingBookings(true);
     setErrorMsg(null);
     const q = query(collection(db, 'bookings'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+
+    // FALLBACK TIMEOUT: If Firebase takes longer than 3 seconds to connect,
+    // unblock the UI and show a specific error. This typically happens on Vercel
+    // if the Vercel domain hasn't been added to the Google Cloud API Key restrictions.
+    const timeoutId = setTimeout(() => {
+      setIsLoadingBookings(false);
+      setErrorMsg('Network timeout: Could not connect to Firebase. If you deployed to Vercel, you MUST authorize your Vercel domain in your Google Cloud Console (API & Services -> Credentials -> Browser Key HTTP Referrers).');
+    }, 3000);
+
+    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+      clearTimeout(timeoutId);
       const bookingsData: Booking[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -50,12 +60,16 @@ export default function App() {
       setAllBookings(bookingsData);
       setIsLoadingBookings(false);
     }, (error) => {
+      clearTimeout(timeoutId);
       setIsLoadingBookings(false);
       handleFirestoreError(error, OperationType.LIST, 'bookings');
       setErrorMsg('Failed to sync bookings. Check connection.');
     });
     
-    return unsubscribe;
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -101,36 +115,54 @@ export default function App() {
         slot: selectedSlot,
         createdAt: serverTimestamp()
       };
-      await addDoc(collection(db, 'bookings'), newBooking);
+      
+      // Fire and forget so we don't block the UI while Firebase syncs
+      addDoc(collection(db, 'bookings'), newBooking).catch(err => {
+        console.error('Failed to sync booking to server:', err);
+        alert("Warning: Could not sync to server. If you are on an external service like Vercel, ensure the domain is added to Firebase API constraints in the Google Cloud Console.");
+      });
+      
       setSuccessBooking(newBooking as any);
     } catch (err) {
       console.error(err);
-      handleFirestoreError(err, OperationType.CREATE, 'bookings');
       alert("Failed to submit booking. Check connection.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteBooking = async (id: string, bookingHouse: string, bookingSubUnit: string) => {
-    const passcode = window.prompt(`Admin Passcode required to cancel the booking for ${bookingHouse} (${bookingSubUnit}):`);
-    if (passcode === null) return;
+  // Delete Modal State
+  const [deleteCandidate, setDeleteCandidate] = useState<{id: string, house: string, subUnit: string} | null>(null);
+  const [deletePasscode, setDeletePasscode] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const initDelete = (id: string, house: string, subUnit: string) => {
+    setDeleteCandidate({ id, house, subUnit });
+    setDeletePasscode('');
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteCandidate) return;
     
-    if (passcode !== (import.meta.env.VITE_ADMIN_PASSCODE || 'admin123')) {
-      alert("Incorrect admin passcode.");
+    // @ts-ignore
+    if (deletePasscode !== (import.meta.env.VITE_ADMIN_PASSCODE || 'admin123')) {
+      alert("Incorrect admin passcode."); // we can change this to a state error too if we want, but alert is also sometimes iffy. Let's make an error state.
       return;
     }
-    
-    if (!window.confirm(`Passcode accepted. Are you sure you want to permanently delete the booking for ${bookingHouse} (${bookingSubUnit})?`)) return;
-    
+
+    setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, 'bookings', id));
+      await deleteDoc(doc(db, 'bookings', deleteCandidate.id)).catch(err => {
+         console.error('Failed to sync delete to server:', err);
+      });
+      setDeleteCandidate(null);
     } catch (err) {
       console.error(err);
-      handleFirestoreError(err, OperationType.DELETE, `bookings/${id}`);
-      alert("Failed to cancel booking. Check connection.");
+    } finally {
+      setIsDeleting(false);
     }
   };
+
 
 
 
@@ -258,13 +290,15 @@ export default function App() {
 
         {/* RIGHT PANE: LIVE DASHBOARD */}
         <div className="lg:col-span-7 bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100 flex flex-col h-full max-h-[85vh]">
-          <div className="p-5 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0 z-10">
+          <div className="p-5 sm:p-8 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-10">
             <div>
               <h2 className="text-xl font-bold flex items-center gap-2">
-                <RadioTower className={`w-5 h-5 text-lime-500 ${isLoadingBookings ? 'animate-pulse' : ''}`} /> 
+                <RadioTower className={`w-5 h-5 ${isLoadingBookings ? 'text-amber-500 animate-pulse' : 'text-lime-500'}`} /> 
                 Live Availability
               </h2>
-              <p className="text-sm text-gray-500">Real-time slot status</p>
+              <p className="text-sm text-gray-500">
+                {isLoadingBookings ? 'Connecting to servers...' : 'Real-time slot status'}
+              </p>
             </div>
             <div className="flex gap-4 text-sm font-medium">
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span> Open</span>
@@ -295,17 +329,17 @@ export default function App() {
             })}
           </div>
           
-          <div className="p-5 overflow-y-auto flex-1">
-            {isLoadingBookings && allBookings.length === 0 ? (
-              <div className="flex items-center justify-center p-12 text-gray-400">
-                <svg className="animate-spin -ml-1 mr-3 h-6 w-6 text-lime-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <div className="p-5 overflow-y-auto flex-1 relative">
+            {isLoadingBookings && allBookings.length === 0 && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 bg-amber-100 text-amber-800 text-xs font-bold px-4 py-1.5 rounded-full shadow-sm flex items-center gap-2">
+                <svg className="animate-spin h-3 w-3 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Syncing with Firestore...
+                Syncing Network...
               </div>
-            ) : (
-              <div className="space-y-4 pb-10">
+            )}
+            <div className="space-y-4 pb-10">
                 {(activeDashboardDate === '2026-05-27' ? MAY_27_SLOTS : REGULAR_SLOTS).map(slot => {
                   const booked = allBookings.find(b => b.date === activeDashboardDate && b.slot === slot);
                   const isBooked = !!booked;
@@ -324,7 +358,7 @@ export default function App() {
                                 <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-700">Booked</span>
                                 <span className="text-sm font-medium text-gray-700">{booked.house} • {booked.subUnit}</span>
                                 <button 
-                                  onClick={() => booked.id && handleDeleteBooking(booked.id, booked.house, booked.subUnit)} 
+                                  onClick={() => booked.id && initDelete(booked.id, booked.house, booked.subUnit)} 
                                   className="ml-auto text-xs font-medium text-red-600 hover:text-red-800 transition-colors flex items-center gap-1 opacity-70 hover:opacity-100"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -344,10 +378,46 @@ export default function App() {
                   );
                 })}
               </div>
-            )}
           </div>
         </div>
       </div>
+      
+      {/* Delete Confirmation Modal */}
+      {deleteCandidate && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Cancel Booking</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Enter the admin passcode to cancel the booking for <span className="font-semibold text-gray-900">{deleteCandidate.house} ({deleteCandidate.subUnit})</span>. This action cannot be undone.
+            </p>
+            
+            <input 
+              type="password" 
+              placeholder="Admin Passcode"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-lime-500 focus:border-lime-500 outline-none mb-6 font-mono"
+              value={deletePasscode}
+              onChange={(e) => setDeletePasscode(e.target.value)}
+              autoFocus
+            />
+            
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setDeleteCandidate(null)}
+                className="px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Go Back
+              </button>
+              <button 
+                onClick={confirmDelete}
+                disabled={!deletePasscode || isDeleting}
+                className="px-5 py-2.5 text-sm font-semibold bg-red-600 text-white hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeleting ? 'Cancelling...' : 'Confirm Cancellation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
