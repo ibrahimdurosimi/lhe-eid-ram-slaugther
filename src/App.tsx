@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Home, AlertCircle, CalendarCheck, CheckCircle2, RadioTower, Lock, Check } from 'lucide-react';
+import { Home, AlertCircle, CalendarCheck, CheckCircle2, RadioTower, Lock, Check, Trash2 } from 'lucide-react';
 import { Booking } from './types';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { collection, onSnapshot, addDoc, serverTimestamp, query } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, serverTimestamp, query, doc, deleteDoc } from 'firebase/firestore';
 
 const REGULAR_SLOTS = ["06:00 AM - 08:00 AM", "08:00 AM - 10:00 AM", "10:00 AM - 12:00 PM", "12:00 PM - 02:00 PM", "02:00 PM - 04:00 PM", "04:00 PM - 06:00 PM", "06:00 PM - 08:00 PM"];
 const MAY_27_SLOTS = ["09:00 AM - 11:00 AM", "11:00 AM - 01:00 PM", "01:00 PM - 03:00 PM", "03:00 PM - 05:00 PM", "05:00 PM - 07:00 PM", "07:00 PM - 08:00 PM"];
@@ -11,7 +11,7 @@ const DATES = ["2026-05-27", "2026-05-28", "2026-05-29", "2026-05-30"];
 export default function App() {
   
   const [allBookings, setAllBookings] = useState<Booking[]>([]);
-  const [isLoadingBookings, setIsLoadingBookings] = useState(false);
+  const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   // Booking Form State
@@ -39,6 +39,7 @@ export default function App() {
           dStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         }
         bookingsData.push({
+          id: doc.id,
           timestamp: data.timestamp,
           house: data.house,
           subUnit: data.subUnit,
@@ -108,6 +109,26 @@ export default function App() {
       alert("Failed to submit booking. Check connection.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteBooking = async (id: string, bookingHouse: string, bookingSubUnit: string) => {
+    const passcode = window.prompt(`Admin Passcode required to cancel the booking for ${bookingHouse} (${bookingSubUnit}):`);
+    if (passcode === null) return;
+    
+    if (passcode !== (import.meta.env.VITE_ADMIN_PASSCODE || 'admin123')) {
+      alert("Incorrect admin passcode.");
+      return;
+    }
+    
+    if (!window.confirm(`Passcode accepted. Are you sure you want to permanently delete the booking for ${bookingHouse} (${bookingSubUnit})?`)) return;
+    
+    try {
+      await deleteDoc(doc(db, 'bookings', id));
+    } catch (err) {
+      console.error(err);
+      handleFirestoreError(err, OperationType.DELETE, `bookings/${id}`);
+      alert("Failed to cancel booking. Check connection.");
     }
   };
 
@@ -302,6 +323,13 @@ export default function App() {
                               <>
                                 <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-700">Booked</span>
                                 <span className="text-sm font-medium text-gray-700">{booked.house} • {booked.subUnit}</span>
+                                <button 
+                                  onClick={() => booked.id && handleDeleteBooking(booked.id, booked.house, booked.subUnit)} 
+                                  className="ml-auto text-xs font-medium text-red-600 hover:text-red-800 transition-colors flex items-center gap-1 opacity-70 hover:opacity-100"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Cancel
+                                </button>
                               </>
                             ) : (
                               <>
