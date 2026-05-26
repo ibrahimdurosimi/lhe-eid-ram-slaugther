@@ -35,11 +35,12 @@ export default function App() {
     // if the Vercel domain hasn't been added to the Google Cloud API Key restrictions.
     const timeoutId = setTimeout(() => {
       setIsLoadingBookings(false);
-      setErrorMsg('Network timeout: Could not connect to Firebase. If you deployed to Vercel, you MUST authorize your Vercel domain in your Google Cloud Console (API & Services -> Credentials -> Browser Key HTTP Referrers).');
-    }, 3000);
+      setErrorMsg('Network timeout: Could not connect to Firebase. If you deployed to Vercel, you MUST authorize your Vercel domain in your Google Cloud Console by adding your domain with /* at the end to the API key restrictions.');
+    }, 15000);
 
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       clearTimeout(timeoutId);
+      setErrorMsg(null); // Clear any previous timeout/error messages
       const bookingsData: Booking[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
